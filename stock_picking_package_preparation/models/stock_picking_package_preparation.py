@@ -20,8 +20,7 @@ class StockPickingPackagePreparation(models.Model):
     }
 
     def _default_company_id(self):
-        company_model = self.env["res.company"]
-        return company_model._company_default_get(self._name)
+        return self.env.company.id
 
     name = fields.Char(
         related="package_id.name",
@@ -83,7 +82,6 @@ class StockPickingPackagePreparation(models.Model):
         comodel_name="stock.move.line",
         compute="_compute_move_line_ids",
         readonly=True,
-        oldname="pack_operation_ids",
     )
     package_id = fields.Many2one(
         comodel_name="stock.quant.package",
@@ -105,14 +103,12 @@ class StockPickingPackagePreparation(models.Model):
         string="All Content",
     )
 
-    @api.multi
     @api.depends("package_id")
     def _compute_quant_ids(self):
         for preparation in self:
             package = preparation.package_id
             preparation.quant_ids = package._get_contained_quants()
 
-    @api.multi
     @api.depends("package_id", "package_id.quant_ids")
     def _compute_weight(self):
         for preparation in self:
@@ -121,24 +117,21 @@ class StockPickingPackagePreparation(models.Model):
                 continue
             quants = package._get_contained_quants()
             # weight of the products only
-            weight = sum(l.product_id.weight * l.quantity for l in quants)
+            weight = sum(line.product_id.weight * line.quantity for line in quants)
             preparation.weight = weight
 
-    @api.multi
     @api.depends("picking_ids", "picking_ids.move_line_ids")
     def _compute_move_line_ids(self):
         for preparation in self:
             preparation.move_line_ids = preparation.mapped("picking_ids.move_line_ids")
 
-    @api.multi
     def action_done(self):
         if not self.mapped("package_id"):
             raise UserError(_("The package has not been generated."))
         for picking in self.picking_ids:
-            picking.action_done()
+            picking._action_done()
         self.write({"state": "done", "date_done": fields.Datetime.now()})
 
-    @api.multi
     def action_cancel(self):
         if any(prep.state == "done" for prep in self):
             raise UserError(_("Cannot cancel a done package preparation."))
@@ -151,7 +144,6 @@ class StockPickingPackagePreparation(models.Model):
             package_ids.unlink()
         self.write({"state": "cancel"})
 
-    @api.multi
     def action_draft(self):
         if any(prep.state != "cancel" for prep in self):
             raise UserError(
@@ -159,13 +151,11 @@ class StockPickingPackagePreparation(models.Model):
             )
         self.write({"state": "draft"})
 
-    @api.multi
     def action_put_in_pack(self):
         for preparation in self:
             preparation._generate_pack()
         self.write({"state": "in_pack"})
 
-    @api.multi
     def _prepare_package(self):
         self.ensure_one()
         if not self.picking_ids:
@@ -181,7 +171,6 @@ class StockPickingPackagePreparation(models.Model):
         }
         return values
 
-    @api.multi
     def _generate_pack(self):
         self.ensure_one()
         pack_model = self.env["stock.quant.package"]
